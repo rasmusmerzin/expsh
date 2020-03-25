@@ -1,0 +1,137 @@
+#!/bin/sh
+#deps: awk sed head tail basename less
+#desc: Export functions from shellcripts to independent independent files
+
+
+ansiec() {
+  format="%s\033[0m\n"
+  str=$1
+  shift
+  for i in "$@"
+  do format="\033[${i}m$format"
+  done
+  printf "$format" "$str"
+}
+
+prompt() {
+  while [ "$REPLY" != 'y' ] &&
+        [ "$REPLY" != 'Y' ] &&
+        [ "$REPLY" != 'n' ] &&
+        [ "$REPLY" != 'N' ]
+  do
+    printf "%s [y/n] " "$*" && read REPLY &&
+      { [ "$REPLY" = y ] || [ "$REPLY" = Y ]; }
+  done
+}
+
+promptn() {
+  printf "%s [y/N] " "$*" && read REPLY &&
+    { [ "$REPLY" = y ] || [ "$REPLY" = Y ]; }
+}
+
+filter_nth_func() {
+  n=$1
+  shift
+  awk "
+    BEGIN {
+      state=0
+      n=0
+    }
+    /^\w+\(\)\s*{\(?\s*$/{
+      state=1
+    }
+    { if (state == 0 || n != $n) print }
+    /^)?}/{
+      if (state != 0) {
+        state=0
+        n++
+      }
+    }
+    END {
+      exit state
+    }
+  " "$*"
+}
+
+get_nth_func() {
+  n=$1
+  shift
+  awk "
+    BEGIN {
+      state=0
+      n=0
+      print
+    }
+    /^\w+\(\)\s*{\(?\s*$/{
+      state=1
+    }
+    { if (state != 0 && n == $n) print }
+    /^)?}/{
+      if (state != 0) {
+        state=0
+        n++
+      }
+    }
+    END {
+      exit state
+    }
+  " "$*"
+}
+
+get_func_name() { echo "$*" | sed -n 's/^\(\w\+\)\s*().*/\1/p;2 q'; }
+
+get_func_body() {
+  body=$(echo "$*" | head --lines=-1 | tail -n +2)
+  first=$(echo "$body" | head -n 1)
+  i=0
+  str=''
+  while [ "$(substr "$first" "$i" "$((i+1))")" = " " ]
+  do
+    i=$((i+1))
+    str="$str "
+  done
+  echo "$body" | sed "s/^$str//"
+}
+
+
+exe=$(basename "$0")
+
+for file in "$@"
+do
+  i=0
+  while [ "$i" -ge 0 ]
+  do
+    if func=$(get_nth_func "$i" "$file" | tail -n +2)
+    then
+      if [ "${#func}" -le 0 ]
+      then i=-1
+      else
+        name=$(get_func_name "$func")
+        body=$(get_func_body "$func")
+        echo "$file :: $(ansiec "$name()" 1)"
+        promptn ":: View $(ansiec "$name()" 1)?" && echo "$func" | less
+
+        if [ -d "$name" ]
+        then echo "$exe: './$name' is a directory"
+        else
+          (
+            if [ -f "$name" ]
+            then promptn ":: Overwrite $(ansiec "./$name" 1 33)?"
+            else prompt ":: Export to $(ansiec "./$name" 1 32)?"
+            fi
+          ) && printf "#!/bin/sh\n\n%s" "$body" > "$name" && chmod +x "$name" &&
+          if promptn ":: Delete origin $(ansiec "$(basename "$file").$name()" 1 33)?"
+          then
+            filtered=$(filter_nth_func "$i" "$file")
+            printf "%s" "$filtered" > "$file"
+          fi
+        fi
+        echo
+
+        i=$((i+1))
+      fi
+    else echo "$exe: error parsing '$file'"; i=-1
+    fi
+  done
+done
+return $?

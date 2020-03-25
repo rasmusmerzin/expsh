@@ -1,0 +1,3 @@
+expsh - export functions from shellcripts to independent independent files
+
+deps: awk sed head tail basename less
